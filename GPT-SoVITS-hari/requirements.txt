@@ -1,0 +1,38 @@
+# --- PyTorch Core ---
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy<2.0
+scipy
+
+# --- Audio Processing ---
+librosa==0.9.2
+soundfile
+av>=11
+
+# --- Text Processing & G2P (TTS 발음 기호 변환 핵심 엔진) ---
+cn2an
+pypinyin
+pyopenjtalk>=0.4.1
+g2p_en
+jieba
+ko_pron
+g2pk2
+python_mecab_ko; sys_platform != 'win32'
+split-lang
+fast_langdetect>=0.3.1
+
+# --- AI Models & Hub ---
+transformers>=4.43
+huggingface_hub<=1.0
+sentencepiece
+peft
+
+# --- API Server (FastAPI) ---
+fastapi[standard]>=0.115.1
+uvicorn
+pydantic<=2.10.6
+
+# --- Utilities ---
+requests
+tqdm
+PyYAML

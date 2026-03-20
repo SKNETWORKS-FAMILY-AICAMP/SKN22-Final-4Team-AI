@@ -1,0 +1,25 @@
+# 1. 가상환경 및 캐시 (절대 올라가면 안 됨)
+venv/
+__pycache__/
+*.pyc
+
+# 2. 무거운 모델 가중치 파일 (허깅페이스에 이미 올림)
+*.pth
+*.ckpt
+*.pt
+*.safetensors
+
+# 3. 테스트용 오디오 및 결과 리포트 파일
+*.wav
+*.mp3
+*.flac
+*.csv
+eval_results/
+testvoice/
+
+# 4. 일회성 테스트 스크립트
+test_auto.py
+upload_hf.py
+.ipynb_checkpoints/
+logs/
+TEMP/
