@@ -15,6 +15,7 @@ Output JSON:
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from datetime import date
@@ -26,8 +27,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from generate_report_cua import (
     BROWSER_PROFILE_DIR,
     DATA_DIR,
+    _launch_context_with_retry,
+    _assert_allowed_url,
     _ensure_logged_in,
     _run_cua_loop,
+    emit_cost_tracking_summary,
+    set_cost_tracker_api_key_family,
 )
 from openai import OpenAI
 
@@ -113,11 +118,12 @@ def create_notebook(page, client, notebook_name: str) -> str:
     """CUA로 NotebookLM 홈에서 새 노트북을 생성하고 URL을 반환."""
     logger.info("[create_notebook] 홈 이동: %s", NOTEBOOKLM_HOME)
     page.goto(NOTEBOOKLM_HOME, wait_until="domcontentloaded", timeout=90000)
+    _assert_allowed_url(page.url, "CREATE_NB_NAVIGATE")
     try:
         page.wait_for_load_state("networkidle", timeout=30000)
     except Exception:
         pass
-    _ensure_logged_in(page)
+    _ensure_logged_in(page, client)
     time.sleep(2)
 
     TASK = (
@@ -147,11 +153,26 @@ def create_notebook(page, client, notebook_name: str) -> str:
     return notebook_url
 
 
+def _build_openai_client() -> OpenAI:
+    api_key = (
+        os.environ.get("OPENAI_API_KEY_CUA_CREATE_NOTEBOOK", "").strip()
+        or os.environ.get("OPENAI_FALLBACK_API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+    )
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY_CUA_CREATE_NOTEBOOK 또는 OPENAI_FALLBACK_API_KEY "
+            "(legacy OPENAI_API_KEY 포함)가 필요합니다."
+        )
+    return OpenAI(api_key=api_key)
+
+
 # ─────────────────────────────────────────
 # 진입점
 # ─────────────────────────────────────────
 
 def main():
+    set_cost_tracker_api_key_family("cua_create_notebook")
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", required=True, help="노트북 표시 이름 (예: '노마드코더 2025-03-18')")
     parser.add_argument("--channel-id", required=True, help="YouTube 채널 ID (예: 'UCUpJs89fSBXNolQGOYKn0YQ')")
@@ -161,19 +182,10 @@ def main():
     args = parser.parse_args()
 
     BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    client = OpenAI()
+    client = _build_openai_client()
 
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_PROFILE_DIR),
-            headless=args.headless,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-            ],
-            viewport={"width": 1280, "height": 800},
-        )
+        context = _launch_context_with_retry(p, headless=args.headless, phase="CREATE_NOTEBOOK")
         page = context.new_page()
 
         notebook_url = create_notebook(page, client, args.name)
@@ -199,4 +211,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        emit_cost_tracking_summary()

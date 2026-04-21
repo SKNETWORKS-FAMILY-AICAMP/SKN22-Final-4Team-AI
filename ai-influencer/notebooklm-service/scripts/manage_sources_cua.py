@@ -10,18 +10,24 @@ Modes:
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).parent))
 from generate_report_cua import (
     BROWSER_PROFILE_DIR,
+    _launch_context_with_retry,
     _ensure_logged_in,
+    _assert_allowed_url,
     _run_cua_loop,
+    emit_cost_tracking_summary,
+    set_cost_tracker_api_key_family,
 )
 from openai import OpenAI
 
@@ -35,6 +41,20 @@ logger = logging.getLogger("manage_sources_cua")
 DATA_DIR = Path(__file__).parent.parent / "data"
 SOURCES_LOG_PATH = DATA_DIR / "sources_log.json"
 NOTEBOOKLM_HOME = "https://notebooklm.google.com"
+
+
+def _build_openai_client() -> OpenAI:
+    api_key = (
+        os.environ.get("OPENAI_API_KEY_CUA_MANAGE_SOURCES", "").strip()
+        or os.environ.get("OPENAI_FALLBACK_API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+    )
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY_CUA_MANAGE_SOURCES 또는 OPENAI_FALLBACK_API_KEY "
+            "(legacy OPENAI_API_KEY 포함)가 필요합니다."
+        )
+    return OpenAI(api_key=api_key)
 
 
 # ─────────────────────────────────────────
@@ -65,6 +85,11 @@ def _is_duplicate(url: str, notebook_url: str) -> bool:
     )
 
 
+def _clean_notebook_url(notebook_url: str) -> str:
+    parsed = urlparse(notebook_url)
+    return urlunparse(parsed._replace(query="", fragment=""))
+
+
 def _log_add(url: str, title: str, notebook_url: str) -> None:
     log = _load_log()
     log.setdefault("sources", []).append({
@@ -83,6 +108,43 @@ def _log_delete(url: str, notebook_url: str) -> None:
         if not (s["url"] == url and s.get("notebook_url") == notebook_url)
     ]
     _save_log(log)
+
+
+def _source_exists_on_page(page, notebook_url: str, source_url: str, source_title: str, client=None) -> bool:
+    """실제 Sources 패널에 대상 소스가 보이는지 확인한다."""
+    page.goto(_clean_notebook_url(notebook_url), wait_until="domcontentloaded", timeout=90000)
+    _assert_allowed_url(page.url, "SRC_EXISTS_NAVIGATE")
+    try:
+        page.wait_for_load_state("networkidle", timeout=30000)
+    except Exception:
+        pass
+    _ensure_logged_in(page, client)
+    time.sleep(2)
+
+    body_text = page.inner_text("body")
+    source_pos = body_text.find("소스")
+    if source_pos >= 0:
+        body_text = body_text[source_pos:source_pos + 6000]
+
+    candidates = []
+    title = (source_title or "").strip()
+    if title:
+        candidates.append(title)
+        if len(title) > 24:
+            candidates.append(title[:24])
+    if source_url:
+        candidates.append(source_url)
+        if "watch?v=" in source_url:
+            candidates.append(source_url.split("watch?v=", 1)[1][:11])
+        if "youtu.be/" in source_url:
+            candidates.append(source_url.rsplit("/", 1)[-1][:11])
+
+    for needle in candidates:
+        if needle and needle in body_text:
+            logger.info("[source_exists] UI 확인됨: %s", needle)
+            return True
+
+    return False
 
 
 def _get_oldest_sources(notebook_url: str, keep: int) -> list[dict]:
@@ -142,16 +204,15 @@ def _try_dom_add_youtube(page, source_url: str) -> bool:
 def add_source_cua(page, client, notebook_url: str, source_url: str, source_title: str) -> bool:
     """NotebookLM 소스 패널에 URL 추가. YouTube는 DOM 먼저, 실패 시 CUA 폴백."""
     # ?addSource=true 없는 깨끗한 URL로 이동
-    from urllib.parse import urlparse, urlunparse
-    parsed = urlparse(notebook_url)
-    clean_url = urlunparse(parsed._replace(query="", fragment=""))
+    clean_url = _clean_notebook_url(notebook_url)
 
     page.goto(clean_url, wait_until="domcontentloaded", timeout=90000)
+    _assert_allowed_url(page.url, "ADD_SRC_NAVIGATE")
     try:
         page.wait_for_load_state("networkidle", timeout=30000)
     except Exception:
         pass
-    _ensure_logged_in(page)
+    _ensure_logged_in(page, client)
     time.sleep(2)
 
     is_youtube = "youtube.com/watch" in source_url or "youtu.be/" in source_url
@@ -192,20 +253,26 @@ def add_source_cua(page, client, notebook_url: str, source_url: str, source_titl
             )
         success = _run_cua_loop(page, client, TASK, max_steps=15, phase="ADD_SRC")
     if success:
-        logger.info("[add_source] 성공: %s", source_url)
+        time.sleep(3)
+        if _source_exists_on_page(page, notebook_url, source_url, source_title, client=client):
+            logger.info("[add_source] 성공: %s", source_url)
+            return True
+        logger.error("[add_source] UI 검증 실패: %s", source_url)
+        return False
     else:
         logger.error("[add_source] 실패 (15 스텝 초과): %s", source_url)
-    return success
+    return False
 
 
 def delete_source_cua(page, client, notebook_url: str, source_url: str, source_title: str) -> bool:
     """CUA로 특정 소스(제목/URL로 식별)를 삭제."""
     page.goto(notebook_url, wait_until="domcontentloaded", timeout=90000)
+    _assert_allowed_url(page.url, "DEL_SRC_NAVIGATE")
     try:
         page.wait_for_load_state("networkidle", timeout=30000)
     except Exception:
         pass
-    _ensure_logged_in(page)
+    _ensure_logged_in(page, client)
     time.sleep(2)
 
     identify = source_title[:60] if source_title else source_url[:80]
@@ -229,14 +296,15 @@ def delete_source_cua(page, client, notebook_url: str, source_url: str, source_t
     return success
 
 
-def list_sources_from_page(page, notebook_url: str) -> list[str]:
+def list_sources_from_page(page, notebook_url: str, client=None) -> list[str]:
     """DOM에서 소스 패널 제목 목록 파싱 (GPT 불필요)."""
     page.goto(notebook_url, wait_until="domcontentloaded", timeout=90000)
+    _assert_allowed_url(page.url, "LIST_SRC_NAVIGATE")
     try:
         page.wait_for_load_state("networkidle", timeout=30000)
     except Exception:
         pass
-    _ensure_logged_in(page)
+    _ensure_logged_in(page, client)
     time.sleep(2)
 
     body_text = page.inner_text("body")
@@ -264,11 +332,12 @@ def list_sources_from_page(page, notebook_url: str) -> list[str]:
 def find_notebook_url_by_name_cua(page, client, channel_name: str) -> str:
     """NotebookLM 홈에서 channel_name으로 노트북을 찾아 URL 반환. 실패 시 '' 반환."""
     page.goto(NOTEBOOKLM_HOME, wait_until="domcontentloaded", timeout=90000)
+    _assert_allowed_url(page.url, "FIND_NB_NAVIGATE")
     try:
         page.wait_for_load_state("networkidle", timeout=30000)
     except Exception:
         pass
-    _ensure_logged_in(page)
+    _ensure_logged_in(page, client)
     time.sleep(2)
 
     TASK = (
@@ -303,6 +372,7 @@ def find_notebook_url_by_name_cua(page, client, channel_name: str) -> str:
 # ─────────────────────────────────────────
 
 def main():
+    set_cost_tracker_api_key_family("cua_manage_sources")
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", required=True, choices=["list", "add", "delete", "cleanup", "find"])
     parser.add_argument("--notebook-url", default="")
@@ -318,19 +388,10 @@ def main():
         parser.error("--notebook-url is required for this mode")
 
     BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    client = OpenAI()
+    client = _build_openai_client()
 
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_PROFILE_DIR),
-            headless=args.headless,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-            ],
-            viewport={"width": 1280, "height": 800},
-        )
+        context = _launch_context_with_retry(p, headless=args.headless, phase=f"MANAGE-{args.mode.upper()}")
         page = context.new_page()
 
         if args.mode == "find":
@@ -351,7 +412,7 @@ def main():
             return
 
         elif args.mode == "list":
-            sources = list_sources_from_page(page, args.notebook_url)
+            sources = list_sources_from_page(page, args.notebook_url, client=client)
             result = {"sources": sources, "count": len(sources)}
             if args.output:
                 Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -366,10 +427,8 @@ def main():
                 parser.error("--source-url is required for --mode add")
 
             if _is_duplicate(args.source_url, args.notebook_url):
-                logger.info("[add] 중복 → 건너뜀: %s", args.source_url)
-                print(f"⏭️ Duplicate skipped: {args.source_url}")
-                context.close()
-                return
+                logger.warning("[add] sources_log 중복 기록 제거 후 재시도: %s", args.source_url)
+                _log_delete(args.source_url, args.notebook_url)
 
             success = add_source_cua(page, client, args.notebook_url, args.source_url, args.source_title)
             if success:
@@ -417,4 +476,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        emit_cost_tracking_summary()

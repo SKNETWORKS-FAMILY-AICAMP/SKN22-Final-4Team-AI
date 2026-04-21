@@ -1,39 +1,57 @@
 {
+  "id": "pzMcTGlSv35ONsnB",
   "name": "WF-09: YouTube 소스 자동 추가",
   "nodes": [
     {
       "parameters": {
         "rule": {
-          "interval": [{ "field": "hours", "hoursInterval": 1 }]
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
         }
       },
       "id": "wf09-schedule",
       "name": "매시간 실행",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// TOPIC_CHANNELS 파싱: 채널별 (channelId, topic) 쌍 목록으로 펼치기\n// 형식: \"채널이름/채널ID+채널이름/채널ID+...\"\n// 예: \"노마드코더/UCUpJs89fSBXNolQGOYKn0YQ+조코딩/UCQNE2JmbasNYbjGAcuBiRRg\"\nconst raw = $env.TOPIC_CHANNELS || '';\nif (!raw.trim()) return [{ json: { skip: true, reason: 'TOPIC_CHANNELS 미설정' } }];\n\nconst channels = [];\nfor (const ch of raw.split('+')) {\n  const slashIdx = ch.indexOf('/');\n  if (slashIdx < 0) continue;\n  const channelName = ch.slice(0, slashIdx).trim();\n  const channelId   = ch.slice(slashIdx + 1).trim();\n  if (channelName && channelId) channels.push({ channelId, topic: channelName });\n}\n\nif (channels.length === 0) return [{ json: { skip: true, reason: '파싱된 채널 없음' } }];\nreturn channels.map(ch => ({ json: ch }));",
-        "options": {}
+        "jsCode": "// TOPIC_CHANNELS 파싱: 채널별 아이템 생성\n// 형식: 채널이름/채널ID+채널이름/채널ID+...\nconst raw = ($env.TOPIC_CHANNELS || '').trim();\nif (!raw) {\n  return [{ json: { skip: true, reason: 'TOPIC_CHANNELS 미설정' } }];\n}\n\nconst items = [];\nconst invalid = [];\n\nfor (const chunk of raw.split('+')) {\n  const part = (chunk || '').trim();\n  if (!part) continue;\n\n  const slashIdx = part.indexOf('/');\n  if (slashIdx < 0) {\n    invalid.push(`${part}(구분자 '/' 없음)`);\n    continue;\n  }\n\n  const channelName = part.slice(0, slashIdx).trim();\n  const channelId = part.slice(slashIdx + 1).trim();\n\n  if (!channelName || !channelId) {\n    invalid.push(`${part}(채널명/채널ID 비어 있음)`);\n    continue;\n  }\n\n  items.push({ json: { channelId, channelName } });\n}\n\nconsole.log(`[WF-09] parsed channels: valid=${items.length}, invalid=${invalid.length}`);\nif (invalid.length) {\n  console.log(`[WF-09] invalid TOPIC_CHANNELS entries: ${invalid.join(', ')}`);\n}\n\nif (!items.length) {\n  return [{ json: { skip: true, reason: '유효한 채널 없음' } }];\n}\n\nreturn items;",
+        "options": {},
+        "mode": "runOnceForAllItems"
       },
       "id": "wf09-parse-channels",
       "name": "채널 목록 파싱",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true },
+          "options": {
+            "caseSensitive": true
+          },
           "conditions": [
             {
               "id": "skip-check",
               "leftValue": "={{ $json.skip }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "notEquals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
             }
           ],
           "combinator": "and"
@@ -43,29 +61,41 @@
       "name": "채널 있는 경우만",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [640, 300]
+      "position": [
+        640,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// YouTube RSS 조회 (최대 10회 재시도, 3초 간격) + 새 영상 필터링 (Shorts 제외)\nconst channelId = $json.channelId || '';\nconst topic = $json.topic || '';\nconst RSS_URL = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;\nconst MAX_RETRIES = 10;\nconst WAIT_MS = 3000;\n\nlet xml = '';\nfor (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {\n  try {\n    const body = await $helpers.httpRequest({\n      method: 'GET',\n      url: RSS_URL,\n    });\n    if (typeof body === 'string' && body.includes('<feed')) {\n      xml = body;\n      break;\n    }\n    // 응답은 왔지만 유효한 XML이 아님 (404 HTML 등)\n    if (attempt < MAX_RETRIES) {\n      await new Promise(r => setTimeout(r, WAIT_MS));\n    }\n  } catch (e) {\n    // HTTP 에러 (404, 500 등)\n    if (attempt < MAX_RETRIES) {\n      await new Promise(r => setTimeout(r, WAIT_MS));\n    }\n  }\n}\n\nif (!xml) {\n  return [{ json: { skip: true, channelId, topic, reason: `RSS 조회 실패 (${MAX_RETRIES}회 재시도)` } }];\n}\n\n// RSS 파싱: Shorts 제외, 1.5시간 이내\nconst entries = [];\nconst entryRegex = /<entry>([\\s\\S]*?)<\\/entry>/g;\nlet match;\n\nwhile ((match = entryRegex.exec(xml)) !== null) {\n  const block = match[1];\n  const videoId = (block.match(/<yt:videoId>([^<]+)<\\/yt:videoId>/) || [])[1];\n  const title = (block.match(/<title>([^<]+)<\\/title>/) || [])[1] || '';\n  const published = (block.match(/<published>([^<]+)<\\/published>/) || [])[1] || '';\n  const linkMatch = block.match(/<link rel=\"alternate\" href=\"([^\"]+)\"/);\n  const videoLink = linkMatch ? linkMatch[1] : '';\n\n  if (!videoId) continue;\n\n  // YouTube Shorts 제외 (NotebookLM이 Shorts 트랜스크립트를 지원하지 않음)\n  if (videoLink.includes('/shorts/')) continue;\n\n  const publishedMs = new Date(published).getTime();\n  const cutoffMs = Date.now() - 90 * 60 * 1000; // 1.5시간 이내\n\n  if (publishedMs >= cutoffMs) {\n    entries.push({\n      videoUrl: `https://www.youtube.com/watch?v=${videoId}`,\n      title: title.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),\n      publishedAt: published,\n      channelId,\n      topic,\n    });\n  }\n}\n\nif (entries.length === 0) {\n  return [{ json: { skip: true, channelId, topic, reason: '새 영상 없음 (Shorts 포함 필터링)' } }];\n}\n\nreturn entries.map(e => ({ json: e }));",
-        "options": {}
+        "jsCode": "// 채널별 active notebook 상태 확인 + 빈 notebook에만 최신 recent video 1개 선택\nconst channelId = ($json.channelId || '').trim();\nconst channelName = ($json.channelName || '').trim();\n\nif (!channelId) {\n  return { json: { skip: true, channelId, channelName, reason: 'channelId 없음' } };\n}\n\nlet notebookState;\ntry {\n  notebookState = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${$env.NOTEBOOKLM_SERVICE_URL}/notebook-state`,\n    headers: {\n      'Content-Type': 'application/json',\n      'X-Internal-Secret': $env.GATEWAY_INTERNAL_SECRET,\n    },\n    body: { channel_id: channelId },\n    json: true,\n    timeout: 30000,\n  });\n} catch (e) {\n  const msg = e && e.message ? e.message : String(e);\n  return {\n    json: {\n      skip: true,\n      channelId,\n      channelName,\n      reason: `notebook-state 조회 실패(${msg.slice(0, 200)})`,\n      sourceResolver: '',\n      resolverAttempts: 0,\n      resolverErrors: [msg.slice(0, 300)],\n    },\n  };\n}\n\nif (!notebookState || notebookState.status !== 'success' || !notebookState.notebook_url) {\n  return {\n    json: {\n      skip: true,\n      channelId,\n      channelName,\n      reason: `active notebook 없음(${(notebookState && notebookState.error) || 'unknown'})`,\n      sourceResolver: '',\n      resolverAttempts: 0,\n      resolverErrors: [String((notebookState && notebookState.error) || 'unknown')],\n    },\n  };\n}\n\nconst notebookUrl = (notebookState.notebook_url || '').trim();\nconst activeSourceCount = Number.isFinite(Number(notebookState.active_source_count)) ? Number(notebookState.active_source_count) : 0;\nconst activeReportCount = Number.isFinite(Number(notebookState.active_report_count)) ? Number(notebookState.active_report_count) : 0;\nconst hasSources = Boolean(notebookState.has_sources);\nconst hasReports = Boolean(notebookState.has_reports);\nconst lookbackRaw = ($env.WF09_LOOKBACK_HOURS || '').trim();\nconst parsedLookback = Number.parseFloat(lookbackRaw);\nconst lookbackHours = Number.isFinite(parsedLookback) && parsedLookback > 0 ? parsedLookback : 24;\nconst CUTOFF_MS = Date.now() - lookbackHours * 60 * 60 * 1000;\nconst CUTOFF_ISO = new Date(CUTOFF_MS).toISOString();\n\nif (hasSources) {\n  return {\n    json: {\n      skip: true,\n      channelId,\n      channelName,\n      notebookUrl,\n      activeSourceCount,\n      hasSources,\n      activeReportCount,\n      hasReports,\n      seedMode: 'skip-existing-sources',\n      reason: `active notebook already has sources(${activeSourceCount})`,\n      lookbackHours,\n      cutoffIso: CUTOFF_ISO,\n      selectedStrategy: 'skip-existing-sources',\n      sourceResolver: '',\n      resolverAttempts: 0,\n      resolverErrors: [],\n    },\n  };\n}\n\nconst seedMode = 'initial-empty-notebook';\nlet resolved;\ntry {\n  resolved = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${$env.NOTEBOOKLM_SERVICE_URL}/resolve-latest-video`,\n    headers: {\n      'Content-Type': 'application/json',\n      'X-Internal-Secret': $env.GATEWAY_INTERNAL_SECRET,\n    },\n    body: {\n      channel_id: channelId,\n      channel_name: channelName,\n      lookback_hours: lookbackHours,\n      exclude_shorts: true,\n    },\n    json: true,\n    timeout: 150000,\n  });\n} catch (e) {\n  const msg = e && e.message ? e.message : String(e);\n  return {\n    json: {\n      skip: true,\n      channelId,\n      channelName,\n      notebookUrl,\n      activeSourceCount,\n      hasSources,\n      activeReportCount,\n      hasReports,\n      seedMode,\n      reason: 'source-resolver-failed',\n      resolverAttempts: 0,\n      resolverErrors: [msg.slice(0, 300)],\n      sourceResolver: '',\n      lookbackHours,\n      cutoffIso: CUTOFF_ISO,\n    },\n  };\n}\n\nconst resolverErrors = Array.isArray(resolved?.errors) ? resolved.errors : [];\nconst resolverAttempts = Number.isFinite(Number(resolved?.attempts)) ? Number(resolved.attempts) : 0;\nconst sourceResolver = (resolved?.resolver || '').trim();\n\nif (!resolved || resolved.status !== 'success') {\n  return {\n    json: {\n      skip: true,\n      channelId,\n      channelName,\n      notebookUrl,\n      activeSourceCount,\n      hasSources,\n      activeReportCount,\n      hasReports,\n      seedMode,\n      reason: 'source-resolver-failed',\n      resolverAttempts,\n      resolverErrors: resolverErrors.length ? resolverErrors : [String(resolved?.error || 'unknown')],\n      sourceResolver,\n      lookbackHours,\n      cutoffIso: CUTOFF_ISO,\n    },\n  };\n}\n\nif (!resolved.found || !resolved.video_url) {\n  const lastError = resolverErrors.length ? resolverErrors[resolverErrors.length - 1] : '';\n  const resolverFailed = resolverErrors.some((err) => /^(rss|yt_dlp):/i.test(String(err)) && !String(err).includes('no-recent-video-within-lookback'));\n  const reason = resolverFailed ? 'source-resolver-failed' : 'no-recent-video-within-lookback';\n  return {\n    json: {\n      skip: true,\n      channelId,\n      channelName,\n      notebookUrl,\n      activeSourceCount,\n      hasSources,\n      activeReportCount,\n      hasReports,\n      seedMode,\n      reason,\n      resolverAttempts,\n      resolverErrors,\n      sourceResolver,\n      lookbackHours,\n      cutoffIso: CUTOFF_ISO,\n      selectedStrategy: reason,\n      error: lastError || String(resolved.error || ''),\n    },\n  };\n}\n\nreturn {\n  json: {\n    videoUrl: resolved.video_url,\n    title: resolved.title || '',\n    publishedAt: resolved.published_at || '',\n    channelId,\n    channelName,\n    notebookUrl,\n    activeSourceCount,\n    hasSources,\n    activeReportCount,\n    hasReports,\n    seedMode,\n    cutoffIso: CUTOFF_ISO,\n    lookbackHours,\n    sourceResolver,\n    resolverAttempts,\n    resolverErrors,\n    selectedStrategy: sourceResolver ? `latest-recent-via-${sourceResolver}` : 'latest-recent-resolved',\n    forceAutoReport: false,\n  },\n};",
+        "options": {},
+        "mode": "runOnceForEachItem"
       },
       "id": "wf09-fetch-and-filter",
       "name": "RSS 조회 + 새 영상 필터링",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [840, 220]
+      "position": [
+        840,
+        220
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true },
+          "options": {
+            "caseSensitive": true
+          },
           "conditions": [
             {
               "id": "skip-check",
               "leftValue": "={{ $json.skip }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "notEquals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
             }
           ],
           "combinator": "and"
@@ -75,7 +105,10 @@
       "name": "새 영상 있는 경우만",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1040, 220]
+      "position": [
+        1040,
+        220
+      ]
     },
     {
       "parameters": {
@@ -84,13 +117,19 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "X-Internal-Secret", "value": "={{ $env.GATEWAY_INTERNAL_SECRET }}" },
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.GATEWAY_INTERNAL_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ source_url: $json.videoUrl, source_title: $json.title, channel_id: $json.channelId, channel_name: $json.topic, max_sources: $env.NOTEBOOKLM_MAX_SOURCES ? parseInt($env.NOTEBOOKLM_MAX_SOURCES) : 20 }) }}",
+        "jsonBody": "={{ JSON.stringify({ source_url: $json.videoUrl, source_title: $json.title, notebook_url: $json.notebookUrl, channel_id: $json.channelId, channel_name: $json.channelName, max_sources: $env.NOTEBOOKLM_MAX_SOURCES ? parseInt($env.NOTEBOOKLM_MAX_SOURCES) : 20 }) }}",
         "options": {
           "timeout": 360000
         }
@@ -99,44 +138,101 @@
       "name": "NotebookLM 소스 추가",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1240, 140]
+      "position": [
+        1240,
+        140
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// 결과 로깅\nconst result = $input.item.json;\n\nif (result.duplicate) {\n  console.log(`[WF-09] 중복 건너뜀`);\n} else if (result.added) {\n  console.log(`[WF-09] 소스 추가 완료 (cleaned=${result.cleaned_up})`);\n} else if (result.error) {\n  console.error(`[WF-09] 소스 추가 실패: ${result.error}`);\n}\n\nreturn [{ json: result }];",
-        "options": {}
+        "jsCode": "// 결과 로깅 + auto-report 트리거(소스 추가 성공 + 복구 경로)\nconst result = $input.item.json || {};\nconst source = $('RSS 조회 + 새 영상 필터링').item.json || result;\n\nconst callAutoReport = async (reasonLabel, payload) => {\n  if (!payload.channel_id) {\n    result.auto_report_status = 'skipped';\n    result.auto_report_reason = 'missing-channel-id';\n    return;\n  }\n\n  try {\n    const parsed = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'http://messenger-gateway:8080/internal/auto-report',\n      headers: {\n        'Content-Type': 'application/json',\n        'X-Internal-Secret': $env.GATEWAY_INTERNAL_SECRET,\n      },\n      body: payload,\n      json: true,\n      timeout: 30000,\n    });\n\n    result.auto_report_status = parsed.status || 'triggered';\n    result.auto_report_reason = parsed.reason || reasonLabel;\n    result.auto_report_job_id = parsed.job_id || '';\n    result.auto_report_notebook_url = parsed.notebook_url || source.notebookUrl || '';\n    result.auto_report_attempts_today = parsed.attempts_today;\n    result.auto_report_limit = parsed.max_attempts_per_day;\n    const shortId = (result.auto_report_job_id || '').slice(0, 8);\n    console.log(`[WF-09] auto-report ${result.auto_report_status} channel=${payload.channel_id} reason=${result.auto_report_reason || reasonLabel} job=${shortId || '(none)'}`);\n  } catch (e) {\n    const msg = e && e.message ? e.message : String(e);\n    result.auto_report_status = 'failed';\n    result.auto_report_reason = reasonLabel;\n    result.auto_report_error = msg.slice(0, 300);\n    console.error(`[WF-09] auto-report trigger error channel=${payload.channel_id}: ${result.auto_report_error}`);\n  }\n};\n\n// 복구 경로: 소스는 있는데 보고서가 없는 active notebook\nif (result.skip === true) {\n  const hasSources = Boolean(source.hasSources);\n  const hasReports = Boolean(source.hasReports);\n  if (hasSources && !hasReports) {\n    await callAutoReport('recovery-no-report', {\n      channel_id: source.channelId || '',\n      channel_name: source.channelName || '',\n      source_url: source.videoUrl || '',\n      source_title: source.title || '',\n    });\n  } else {\n    result.auto_report_status = 'skipped';\n    result.auto_report_reason = source.reason || 'skip';\n  }\n  return { json: result };\n}\n\nif (result.duplicate) {\n  const hasReports = Boolean(source.hasReports);\n  if (!hasReports) {\n    await callAutoReport('duplicate-no-report', {\n      channel_id: source.channelId || '',\n      channel_name: source.channelName || '',\n      source_url: source.videoUrl || '',\n      source_title: source.title || '',\n    });\n  } else {\n    result.auto_report_status = 'skipped';\n    result.auto_report_reason = 'duplicate-source';\n  }\n  return { json: result };\n}\n\nif (result.added) {\n  console.log(`[WF-09] source added channel=${source.channelId || '(unknown)'} notebook=${source.notebookUrl || '(unknown)'} sourceCountBefore=${source.activeSourceCount ?? '(unknown)'} strategy=${source.selectedStrategy || '(unknown)'} cleaned=${result.cleaned_up}`);\n  await callAutoReport('source-added', {\n    channel_id: source.channelId || '',\n    channel_name: source.channelName || '',\n    source_url: source.videoUrl || '',\n    source_title: source.title || '',\n  });\n  return { json: result };\n}\n\nif (result.error) {\n  console.error(`[WF-09] source add failed channel=${source.channelId || '(unknown)'} strategy=${source.selectedStrategy || '(unknown)'}: ${result.error}`);\n}\n\nresult.auto_report_status = result.auto_report_status || 'skipped';\nresult.auto_report_reason = result.auto_report_reason || 'no-action';\nreturn { json: result };",
+        "options": {},
+        "mode": "runOnceForEachItem"
       },
       "id": "wf09-log",
       "name": "결과 로깅",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1440, 140]
+      "position": [
+        1440,
+        140
+      ]
     }
   ],
   "connections": {
     "매시간 실행": {
-      "main": [[{ "node": "채널 목록 파싱", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "채널 목록 파싱",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "채널 목록 파싱": {
-      "main": [[{ "node": "채널 있는 경우만", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "채널 있는 경우만",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "채널 있는 경우만": {
       "main": [
-        [{ "node": "RSS 조회 + 새 영상 필터링", "type": "main", "index": 0 }],
+        [
+          {
+            "node": "RSS 조회 + 새 영상 필터링",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
       ]
     },
     "RSS 조회 + 새 영상 필터링": {
-      "main": [[{ "node": "새 영상 있는 경우만", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "새 영상 있는 경우만",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "새 영상 있는 경우만": {
       "main": [
-        [{ "node": "NotebookLM 소스 추가", "type": "main", "index": 0 }],
-        []
+        [
+          {
+            "node": "NotebookLM 소스 추가",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "결과 로깅",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "NotebookLM 소스 추가": {
-      "main": [[{ "node": "결과 로깅", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "결과 로깅",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
