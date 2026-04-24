@@ -263,7 +263,7 @@ Nginx → Daphne reverse proxy 및 static/media 서빙
 * **Web Serving:** `web` 컨테이너는 `migrate`, `collectstatic`, `daphne`를 순서대로 실행하고, Nginx가 80 포트에서 Daphne(8000)로 프록시합니다.
 
 ### 환경 변수 (`.env` / EB 환경 설정)
-로컬 개발용 `.env` 파일은 [`backend/.env.example`](c:\Users\minje\Documents\SKN22-FINAL-4TEAM_WEB\backend\.env.example)을 복사해 생성합니다.
+로컬 개발용 `.env` 파일은 [`backend/.env.example`]을 복사해 생성합니다.
 
 ```bash
 cd backend
