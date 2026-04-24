@@ -141,104 +141,70 @@ python manage.py runserver
 
 ## 7. Project Structure
 
-현재 레포지토리의 상세 디렉토리 구조입니다.
+현재 루트 레포는 AI 파이프라인, 자동화 서비스, 음성/이미지 생성 자산을 담고 있습니다.
+웹 애플리케이션 레포는 별도로 분리되어 있으며, `SKN22-Final-4Team-WEB`의 프론트엔드/백엔드 구조와 구현 내용은 `https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN22-Final-4Team-WEB`에서 확인할 수 있습니다.
 
 ```
-SKN22-Final-4Team-WEB/
+SKN22-Final-4Team-AI/
 │
 ├── .github/
-│   └── workflows/
-│       └── deploy-eb.yml          # GitHub Actions: develop 브랜치 push 시 EB 자동 배포
+│   └── ISSUE_TEMPLATE/
+│       └── backlog-template.md    # 이슈/백로그 템플릿
 │
-├── backend/                       # 🔑 Django 백엔드 및 배포 대상 루트
-│   │
-│   ├── .ebextensions/             # AWS Elastic Beanstalk 환경 설정
-│   ├── .platform/                 # EB 플랫폼 훅/런타임 설정
-│   ├── config/                    # Django 프로젝트 설정
-│   │   ├── settings.py            # 환경 변수, DB, 인증, 정적 파일 설정
-│   │   ├── urls.py                # 루트 URL 라우터
-│   │   ├── asgi.py                # ASGI 엔트리포인트 (HTTP + WebSocket)
-│   │   └── celery.py              # Celery 앱 설정
-│   │
-│   ├── chat/                      # 하리 채팅 서비스 핵심 앱
-│   │   ├── engine.py              # LangChain/LangGraph 기반 채팅 엔진
-│   │   ├── consumers.py           # Django Channels WebSocket Consumer
-│   │   ├── web_search.py          # 조건부 웹 검색(Tavily) 로직
-│   │   ├── memory_extractor.py    # 대화 메모리 추출 및 저장
-│   │   ├── memory_vector.py       # 벡터 검색/임베딩 연동
-│   │   ├── models.py              # Message, ChatMemory 등 DB 모델
-│   │   ├── views.py               # 홈페이지·채팅·마이페이지 뷰
-│   │   └── management/commands/   # 콘텐츠 처리 관리 명령어
-│   │
-│   ├── roleplay/                  # 롤플레잉 엔진 및 프롬프트 시스템
-│   │   ├── engine.py              # 롤플레잉 생성/파싱 엔진
-│   │   ├── tasks.py               # 비동기 작업 처리
-│   │   ├── prompts/               # 롤플레잉 프롬프트 템플릿
-│   │   │   └── llm_rule.md        # Prompt Sandwich 핵심 규칙
-│   │   ├── frontendexample/       # React + Vite 기반 롤플레잉 UI
-│   │   └── templates/roleplay/    # 롤플레잉 템플릿
-│   │
-│   ├── rpg/                       # 롤플레잉 세션/로어북/이미지 모델 관리 앱
-│   │   ├── models.py              # Session, Lorebook, CharacterImage 등
-│   │   └── admin.py               # 관리자 페이지 커스터마이징
-│   │
-│   ├── templates/                 # Django 템플릿 루트
-│   │   ├── frontend/              # 사용자용 페이지 템플릿
-│   │   │   ├── homepage.html      # 랜딩 페이지 (Nav/Auth 모달 CSS 포함)
-│   │   │   ├── chat.html          # 실시간 채팅 페이지
-│   │   │   ├── mypage.html        # 마이페이지 (구독·계정 관리)
-│   │   │   ├── abouthari.html     # 하리 소개 페이지 (프로필·SNS·갤러리 미리보기)
-│   │   │   ├── gallery.html       # 갤러리 페이지 (카테고리 필터·라이트박스)
-│   │   │   ├── video.html         # 영상 콘텐츠 페이지
-│   │   │   ├── membership.html    # 멤버십 플랜 소개 페이지
-│   │   │   └── includes/          # 각 페이지 안에 삽입되는 섹션 단위 파일 모음
-│   │   │       ├── homepage/      # 네비게이션, 로그인/회원가입 모달, 히어로, 하리 소개, 갤러리, 영상, 푸터
-│   │   │       ├── mypage/        # 상단바, 사이드바, 내 정보·구독·계정 섹션
-│   │   │       └── chat/          # 채팅 헤더, 메시지 목록, 입력창, 검색
-│   │   └── admin/                 # Django Admin 커스텀 템플릿
-│   │
-│   ├── static/                    # 정적 파일 소스
-│   │   ├── images/                # 하리 이미지 및 로고
-│   │   ├── js/                    # 전역 JavaScript
-│   │   └── roleplay-app/          # 빌드된 롤플레잉 프론트 정적 자산
-│   │
-│   ├── media/                     # 업로드/생성 산출물 저장소
-│   ├── manage.py                  # Django 관리 CLI
-│   ├── requirements.txt           # Python 의존성
-│   ├── Procfile                   # EB 프로세스 실행 정의
-│   ├── Dockerfile                 # Docker 이미지 정의
-│   └── docker-compose.yml         # 로컬 개발용 Docker 구성
+├── ai-influencer/                 # 자동화 오케스트레이션 및 운영 서비스 모음
+│   ├── messenger-gateway/         # 작업 접수, 상태 추적, 스토리지 연동 게이트웨이
+│   ├── tts-router-service/        # TTS 요청 라우팅 서비스
+│   ├── heygen-pipeline-service/   # HeyGen 생성 파이프라인 서비스
+│   ├── sns-publisher-service/     # SNS 업로드 자동화 서비스
+│   ├── notebooklm-service/        # NotebookLM 리포트 생성 서비스
+│   ├── seed-lab-service/          # SeedLab 이미지 생성 서비스
+│   ├── runpod-serverless-tts/     # Runpod 서버리스 TTS 핸들러
+│   ├── runpod-seedlab-eval-service/ # SeedLab 평가 서비스
+│   ├── discord-bot/               # Discord 봇 엔트리포인트
+│   ├── server-control-lambda/     # 서버 제어용 AWS Lambda 코드
+│   ├── edge-proxy/                # Caddy 리버스 프록시 설정
+│   ├── postgres/                  # Postgres 초기화 SQL
+│   ├── n8n/                       # 자동화 워크플로 정의
+│   ├── runpod-stack/              # Runpod 스택 실행 스크립트
+│   ├── runtime/                   # 런타임별 참고 리소스
+│   ├── scripts/                   # 운영/검증 스크립트
+│   ├── tests/                     # 회귀 테스트
+│   ├── docker-compose.yml         # 서비스 통합 실행 구성
+│   └── README.md                  # ai-influencer 문서
 │
-├── db/                            # DB 초기화 및 pgvector 적재 스크립트
-│   ├── setup_db_schema.py
-│   ├── ingest_to_pgvector.py
-│   └── setup_rds.ps1
+├── GPT-SoVITS-hari/               # 하리 음성 합성 학습/추론 서브모듈
+│   ├── GPT_SoVITS/                # 모델 코드 및 학습/추론 파이프라인
+│   ├── tools/                     # 전처리, ASR, 보조 유틸리티
+│   ├── docs/                      # 다국어 문서
+│   ├── Docker/                    # 도커 다운로드/빌드 리소스
+│   ├── api.py                     # API 엔트리포인트
+│   ├── webui.py                   # Web UI 실행 파일
+│   ├── docker-compose.yaml        # 컨테이너 실행 구성
+│   └── README.md                  # 서브모듈 문서
 │
-├── eval/                          # 품질 평가 및 부하 테스트
-│   ├── golden_dataset.json        # 평가용 골든 데이터셋
-│   ├── judge_eval.py              # LLM-as-a-judge 평가 스크립트
-│   ├── load_test.py               # WebSocket 부하 테스트
-│   └── results/                   # 테스트 결과 JSON
+├── heygen_pipeline/               # 스크립트 기반 영상 생성 파이프라인
+│   ├── input_script/              # 입력 스크립트 보관
+│   ├── generate_video.py          # 영상 생성 실행 스크립트
+│   ├── preprocess_script.py       # 스크립트 전처리
+│   ├── whisper_align.py           # 자막/타임라인 정렬
+│   ├── resume_subtitles.py        # 자막 후처리
+│   └── input_script.txt           # 기본 입력 스크립트
 │
-├── heygen_pipeline/               # HeyGen 기반 영상 생성 파이프라인
-│   ├── generate_video.py          # 오디오 업로드, 영상 생성, 자막 합성
-│   └── input_audio/               # 입력 음성/스크립트 파일
+├── img_gen/                       # 이미지 생성 워크플로우 및 실행 코드
+│   ├── python/                    # ComfyUI 호출용 Python 스크립트
+│   └── workflow/                  # 생성/업스케일 워크플로우 JSON
 │
-├── img_gen/                       # 이미지 생성 워크플로우 및 실행 스크립트
-│   ├── workflow/                  # ComfyUI/생성 워크플로우 JSON
-│   └── run_workflow/              # 이미지 생성 실행 스크립트
-│
-├── ai-influencer/                 # 외부 연동 및 자동화 관련 자산
-├── langchain-skills/              # LangChain 실험/스킬 자료
-├── langsmith-skills/              # LangSmith 트레이싱/평가 자료
-├── BACKEND_REQUEST.md             # 프론트-백엔드 협업 요청 문서
-├── README.md                      # 메인 README
-└── README2.md                     # 발표/문서 정리용 README 초안
+├── .gitignore                     # Git 추적 제외 규칙
+├── .gitmodules                    # GPT-SoVITS-hari 서브모듈 설정
+├── LICENSE                        # 저장소 라이선스
+└── README.md                      # 루트 프로젝트 문서
 ```
 
 ---
 
 ## 8. URL Routing
+
+아래 URL 라우팅과 배포 구성은 분리된 `SKN22-Final-4Team-WEB` 레포 기준입니다.
 
 | URL 경로 | 뷰 함수 | 설명 |
 |---|---|---|
