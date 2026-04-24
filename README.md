@@ -77,7 +77,7 @@
 
 ### AI Modeling
 * **LLM:** LangChain, LangGraph (Multi-turn 대화 및 가드레일 제어)
-* **Voice:** OmniVoice (맞춤 성우 음성 기반 고정밀 음색 복제)
+* **Voice:** GPT-SoVITS v4 (맞춤 성우 음성 기반 고정밀 음색 복제)
 * **Vision:** Z-Image-turbo(이미지 생성), AI-toolkit(LoRA 학습), Heygen API (영상 생성)
 * **Preprocessing:** Pandas, Seedvr2 (이미지 업스케일링), Z-image-Turbo
 
@@ -362,10 +362,18 @@ cp .env.example .env
 
 ---
 
-## 11. License
+## 11. 시연 영상
+
+1. [홈페이지](https://youtu.be/hkwjfSGKjyY)
+2. [하리와 1대1 채팅](https://youtu.be/YFqdvJwkNgs)
+3. [하리와 롤플레잉](https://youtu.be/ozDhitf2RJE)
+4. [영상 생성 자동화](https://youtu.be/ka4o2h4AwOg)
+
+---
+
+## 12. License
 
 이 프로젝트는 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/deed.ko) 라이선스를 따릅니다.
 - **비영리 목적으로만 사용 가능합니다.** (상업적 이용 금지)
 - 사용 시 원작자 및 출처를 반드시 명시해야 합니다.
-- 자유로운 복제, 배포 및 수정이 가능합니다.
- 
+- 자유로운 복제, 배포 및 수정이 가능합니다. 
